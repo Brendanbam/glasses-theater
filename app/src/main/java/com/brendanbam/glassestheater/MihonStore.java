@@ -389,6 +389,22 @@ final class MihonStore {
         return p.length == 2 ? p : null;
     }
 
+    /** Chapters you've reached the end of. */
+    static java.util.Set<String> readChapters(Context c, String seriesDocId) {
+        return new java.util.HashSet<>(Theater.prefs(c).getStringSet("readset:" + seriesDocId, java.util.Collections.emptySet()));
+    }
+
+    static void markRead(Context c, String seriesDocId, String chapterDocId) {
+        java.util.Set<String> set = readChapters(c, seriesDocId);
+        if (set.add(chapterDocId)) Theater.prefs(c).edit().putStringSet("readset:" + seriesDocId, set).apply();
+    }
+
+    static void setRead(Context c, String seriesDocId, String chapterDocId, boolean read) {
+        java.util.Set<String> set = readChapters(c, seriesDocId);
+        if (read) set.add(chapterDocId); else set.remove(chapterDocId);
+        Theater.prefs(c).edit().putStringSet("readset:" + seriesDocId, set).apply();
+    }
+
     static long lastRead(Context c, String seriesDocId) {
         return Theater.prefs(c).getLong("read:" + seriesDocId, 0);
     }

@@ -53,7 +53,9 @@ public class HomeActivity extends Activity {
 
         directionButton = add(col, "");
         directionButton.setOnClickListener(v -> {
-            Theater.setRightToLeft(this, !Theater.rightToLeft(this));
+            ReaderPrefs rp = new ReaderPrefs(this);
+            int m = rp.defaultMode() + 1;
+            rp.setDefaultMode(m >= ReaderPrefs.MODE_NAMES.length ? 1 : m);
             refresh();
         });
 
@@ -115,7 +117,7 @@ public class HomeActivity extends Activity {
 
     private void refresh() {
         sizeButton.setText("🔍   Screen size: " + Theater.screenSize(this) + "%   (A to change)");
-        directionButton.setText("↔   Manga reading direction: " + (Theater.rightToLeft(this) ? "right to left" : "left to right"));
+        directionButton.setText("↔   Default reading mode: " + ReaderPrefs.MODE_NAMES[new ReaderPrefs(this).defaultMode()]);
         metaButton.setText("🖼   Download covers and info (AniList): " + (Meta.enabled(this) ? "on" : "off"));
         frame.setPct(Theater.screenSize(this));
     }

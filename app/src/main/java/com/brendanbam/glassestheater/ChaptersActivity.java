@@ -84,6 +84,16 @@ public class ChaptersActivity extends Activity {
         list.setDrawSelectorOnTop(true);
         list.setAdapter(adapter);
         list.setOnItemClickListener((p, v, pos, id) -> read(pos, 0));
+        // Long-press (or hold A) a chapter to mark it read / unread
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            MihonStore.Entry c = chapters.get(pos);
+            boolean read = MihonStore.readChapters(this, seriesId).contains(c.docId);
+            MihonStore.setRead(this, seriesId, c.docId, !read);
+            adapter.notifyDataSetChanged();
+            showResume();
+            android.widget.Toast.makeText(this, read ? "Marked unread" : "Marked read", android.widget.Toast.LENGTH_SHORT).show();
+            return true;
+        });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1f);
         lp.topMargin = Theater.dp(this, 12);
         col.addView(list, lp);
@@ -132,7 +142,9 @@ public class ChaptersActivity extends Activity {
                 chapters.clear();
                 chapters.addAll(found);
                 adapter.notifyDataSetChanged();
-                status.setText(found.size() + " downloaded chapters  •  A read  •  B back");
+                int read = MihonStore.readChapters(this, seriesId).size();
+                status.setText(found.size() + " downloaded chapters" + (read > 0 ? ", " + Math.min(read, found.size()) + " read" : "")
+                        + "  •  A read  •  hold A mark read  •  B back");
                 showResume();
             });
         });
@@ -140,8 +152,23 @@ public class ChaptersActivity extends Activity {
 
     private void showResume() {
         String[] p = MihonStore.progress(this, seriesId);
+        java.util.Set<String> readSet = MihonStore.readChapters(this, seriesId);
         int idx = -1;
         if (p != null) for (int i = 0; i < chapters.size(); i++) if (chapters.get(i).docId.equals(p[0])) idx = i;
+        // Finished that chapter? Continue with the next unread one
+        if (idx >= 0 && readSet.contains(chapters.get(idx).docId)) {
+            int nextUnread = -1;
+            for (int i = idx + 1; i < chapters.size(); i++) if (!readSet.contains(chapters.get(i).docId)) { nextUnread = i; break; }
+            if (nextUnread >= 0) {
+                final int n = nextUnread;
+                resume.setVisibility(View.VISIBLE);
+                resume.setText("▶  Next: " + chapters.get(n).name.replace(".cbz", "").replace("_", " "));
+                resume.setOnClickListener(v -> read(n, 0));
+                list.setSelection(Math.max(0, n - 1));
+                resume.requestFocus();
+                return;
+            }
+        }
         if (idx < 0) {
             resume.setVisibility(chapters.isEmpty() ? View.GONE : View.VISIBLE);
             resume.setText("▶  Start reading");
@@ -181,6 +208,11 @@ public class ChaptersActivity extends Activity {
     }
 
     private final BaseAdapter adapter = new BaseAdapter() {
+        private java.util.Set<String> readSet = new java.util.HashSet<>();
+        @Override public void notifyDataSetChanged() {
+            readSet = MihonStore.readChapters(ChaptersActivity.this, seriesId);
+            super.notifyDataSetChanged();
+        }
         @Override public int getCount() { return chapters.size(); }
         @Override public Object getItem(int p) { return chapters.get(p); }
         @Override public long getItemId(int p) { return p; }
@@ -196,8 +228,11 @@ public class ChaptersActivity extends Activity {
             MihonStore.Entry c = chapters.get(pos);
             String[] p = MihonStore.progress(ChaptersActivity.this, seriesId);
             boolean current = p != null && p[0].equals(c.docId);
-            t.setText((current ? "● " : "") + c.name.replace(".cbz", "").replace("_", "  "));
-            t.setTextColor(current ? Theater.ACCENT : 0xFFFFFFFF);
+            boolean read = readSet.contains(c.docId);
+            String name = c.name.replace(".cbz", "").replace(".zip", "").replace("_", "  ");
+            if (current && !read) t.setText("●  " + name + "   •  page " + (Integer.parseInt(p[1]) + 1));
+            else t.setText((read ? "✓  " : "") + name);
+            t.setTextColor(current && !read ? Theater.ACCENT : read ? Theater.MUTED : 0xFFFFFFFF);
             return t;
         }
     };
