@@ -40,9 +40,9 @@ public class LibraryActivity extends Activity {
 
     private static final int PICK_FOLDER = 7;
 
-    private final ExecutorService io = Executors.newFixedThreadPool(3);
+    private final ExecutorService io = TheaterApp.pool(3);
     // Cover / info lookups run one at a time (AniList allows about 90 a minute)
-    private final ExecutorService metaQueue = Executors.newSingleThreadExecutor();
+    private final ExecutorService metaQueue = TheaterApp.pool(1);
     private boolean metaRunning;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final LruCache<String, Bitmap> covers = new LruCache<String, Bitmap>(48 * 1024 * 1024) {
@@ -135,13 +135,19 @@ public class LibraryActivity extends Activity {
         frame.setPct(Theater.screenSize(this));
         Uri tree = MihonStore.tree(this);
         if (tree == null) return;
-        if (firstResume) {
-            firstResume = false;
-            List<MihonStore.Series> saved = MihonStore.savedScan(this, tree);
-            if (!saved.isEmpty()) show(saved);
-            scan();
-        } else {
-            applyFilter(); // reading progress may have changed the order
+        try {
+            if (firstResume) {
+                firstResume = false;
+                List<MihonStore.Series> saved = MihonStore.savedScan(this, tree);
+                if (!saved.isEmpty()) show(saved);
+                scan();
+            } else {
+                applyFilter(); // reading progress may have changed the order
+            }
+        } catch (Throwable t) {
+            // Keep the screen open and say what happened instead of closing the app
+            TheaterApp.record(t, "opening the library");
+            status.setText("Something went wrong loading the library (" + t.getClass().getSimpleName() + "). Details are on Home.");
         }
     }
 
@@ -174,22 +180,35 @@ public class LibraryActivity extends Activity {
         scanning = true;
         if (all.isEmpty()) status.setText("Searching your folders for manga…");
         io.execute(() -> {
-            List<MihonStore.Series> found = MihonStore.scan(getContentResolver(), tree, (folders, count) ->
-                    ui.post(() -> { if (all.isEmpty()) status.setText("Searching… " + folders + " folders checked, " + count + " series found"); }));
-            MihonStore.saveScan(this, tree, found);
-            ui.post(() -> {
-                scanning = false;
-                show(found);
-            });
+            try {
+                List<MihonStore.Series> found = MihonStore.scan(getContentResolver(), tree, (folders, count) ->
+                        ui.post(() -> { if (all.isEmpty()) status.setText("Searching… " + folders + " folders checked, " + count + " series found"); }));
+                MihonStore.saveScan(this, tree, found);
+                ui.post(() -> {
+                    scanning = false;
+                    show(found);
+                });
+            } catch (Throwable t) {
+                TheaterApp.record(t, "library search");
+                ui.post(() -> {
+                    scanning = false;
+                    status.setText("Searching the folder failed (" + t.getClass().getSimpleName() + "). Try Rescan or Change folder; details are on Home.");
+                });
+            }
         });
     }
 
     private void show(List<MihonStore.Series> found) {
-        all.clear();
-        all.addAll(found);
-        buildChips();
-        applyFilter();
-        fetchMeta();
+        try {
+            all.clear();
+            all.addAll(found);
+            buildChips();
+            applyFilter();
+            fetchMeta();
+        } catch (Throwable t) {
+            TheaterApp.record(t, "showing the library");
+            status.setText("Something went wrong showing the library (" + t.getClass().getSimpleName() + "). Details are on Home.");
+        }
     }
 
     /** Downloads covers and info for series that don't have them yet, refreshing each card as it arrives. */
@@ -200,6 +219,7 @@ public class LibraryActivity extends Activity {
         if (todo.isEmpty()) return;
         metaRunning = true;
         metaQueue.execute(() -> {
+          try {
             int done = 0;
             for (MihonStore.Series s : todo) {
                 if (Thread.currentThread().isInterrupted()) break;
@@ -213,7 +233,11 @@ public class LibraryActivity extends Activity {
                 });
                 try { Thread.sleep(info == null ? 3000 : 800); } catch (InterruptedException e) { break; }
             }
+          } catch (Throwable t) {
+            TheaterApp.record(t, "cover download");
+          } finally {
             ui.post(() -> { metaRunning = false; applyFilter(); });
+          }
         });
     }
 

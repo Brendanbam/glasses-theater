@@ -33,7 +33,7 @@ import java.util.concurrent.Executors;
  */
 public class ReaderActivity extends Activity {
 
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService io = TheaterApp.pool(1);
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<Integer, Bitmap> cache = new HashMap<>();
 

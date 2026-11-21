@@ -79,6 +79,30 @@ public class HomeActivity extends Activity {
         setContentView(frame);
         refresh();
         manga.requestFocus();
+        showCrashReport();
+    }
+
+    /** If the app closed or hit an error last time, show what happened so it can be sent and fixed. */
+    private void showCrashReport() {
+        String report = TheaterApp.report(this);
+        if (report == null || report.trim().isEmpty()) return;
+        TextView body = Theater.text(this, 12, 0xFFD0D6E0, false);
+        body.setText(report);
+        body.setTextIsSelectable(true);
+        body.setPadding(Theater.dp(this, 20), Theater.dp(this, 12), Theater.dp(this, 20), 0);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(body);
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Something went wrong last time")
+                .setView(sv)
+                .setPositiveButton("Copy", (d, w) -> {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Glasses Theater report", report));
+                    TheaterApp.clearReport(this);
+                    android.widget.Toast.makeText(this, "Copied. Paste it to Claude.", android.widget.Toast.LENGTH_LONG).show();
+                })
+                .setNegativeButton("Dismiss", (d, w) -> TheaterApp.clearReport(this))
+                .show();
     }
 
     private Button add(LinearLayout col, String label) {

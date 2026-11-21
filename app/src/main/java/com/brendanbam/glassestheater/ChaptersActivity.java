@@ -95,7 +95,7 @@ public class ChaptersActivity extends Activity {
     }
 
     private void loadDetails() {
-        Executors.newSingleThreadExecutor().execute(() -> {
+        TheaterApp.pool(1).execute(() -> {
             Meta.Info info = Meta.get(this, title);
             if (info == null && Meta.enabled(this)) info = Meta.fetch(this, title);
             java.io.File art = Meta.coverFile(this, title);
@@ -126,7 +126,7 @@ public class ChaptersActivity extends Activity {
         super.onResume();
         frame.setPct(Theater.screenSize(this));
         Uri tree = MihonStore.tree(this);
-        Executors.newSingleThreadExecutor().execute(() -> {
+        TheaterApp.pool(1).execute(() -> {
             List<MihonStore.Entry> found = MihonStore.chapters(getContentResolver(), tree, seriesId);
             ui.post(() -> {
                 chapters.clear();
