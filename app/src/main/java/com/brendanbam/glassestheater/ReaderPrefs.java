@@ -34,7 +34,7 @@ final class ReaderPrefs {
     private int get(String k, int def) { return p.getInt("rd_" + k, def); }
     private void set(String k, int v) { p.edit().putInt("rd_" + k, v).apply(); }
     private boolean flag(String k, boolean def) { return p.getBoolean("rd_" + k, def); }
-    private void flag(String k, boolean v) { p.edit().putBoolean("rd_" + k, v).apply(); }
+    private void setFlag(String k, boolean v) { p.edit().putBoolean("rd_" + k, v).apply(); }
 
     /* Reading mode */
     int defaultMode() {
@@ -54,29 +54,29 @@ final class ReaderPrefs {
     int scale() { return get("scale", SCALE_SMART); }
     void setScale(int v) { set("scale", v); }
     boolean cropBorders() { return flag("crop", true); }
-    void setCropBorders(boolean v) { flag("crop", v); }
+    void setCropBorders(boolean v) { setFlag("crop", v); }
     boolean splitWide() { return flag("split", true); }
-    void setSplitWide(boolean v) { flag("split", v); }
+    void setSplitWide(boolean v) { setFlag("split", v); }
     boolean doubleTapZoom() { return flag("dtz", true); }
-    void setDoubleTapZoom(boolean v) { flag("dtz", v); }
+    void setDoubleTapZoom(boolean v) { setFlag("dtz", v); }
     boolean animate() { return flag("anim", true); }
-    void setAnimate(boolean v) { flag("anim", v); }
+    void setAnimate(boolean v) { setFlag("anim", v); }
     boolean pageNumber() { return flag("pagenum", true); }
-    void setPageNumber(boolean v) { flag("pagenum", v); }
+    void setPageNumber(boolean v) { setFlag("pagenum", v); }
     int background() { return get("bg", 0); }
     void setBackground(int v) { set("bg", v); }
     int brightness() { return get("bright", 100); }
     void setBrightness(int v) { set("bright", v); }
     boolean grayscale() { return flag("gray", false); }
-    void setGrayscale(boolean v) { flag("gray", v); }
+    void setGrayscale(boolean v) { setFlag("gray", v); }
     boolean invertColors() { return flag("invert", false); }
-    void setInvertColors(boolean v) { flag("invert", v); }
+    void setInvertColors(boolean v) { setFlag("invert", v); }
 
     /* Navigation */
     int tapZones() { return get("tap", TAP_RIGHT_LEFT); }
     void setTapZones(int v) { set("tap", v); }
     boolean invertTaps() { return flag("tapinv", false); }
-    void setInvertTaps(boolean v) { flag("tapinv", v); }
+    void setInvertTaps(boolean v) { setFlag("tapinv", v); }
     int volumeKeys() { return get("vol", 0); }
     void setVolumeKeys(int v) { set("vol", v); }
 
