@@ -41,10 +41,13 @@ final class MihonStore {
         }
     }
 
+    /** A series found on disk. [category] is the folder it sits in (Mihon: the source; your own folders: their name). */
     static final class Series {
         final String docId, title, source;
         Series(String docId, String title, String source) { this.docId = docId; this.title = title; this.source = source; }
     }
+
+    interface Progress { void folders(int scanned, int found); }
 
     private MihonStore() { }
 
@@ -84,17 +87,96 @@ final class MihonStore {
         return root;
     }
 
-    /** Every downloaded series across all sources, A–Z. */
-    static List<Series> library(ContentResolver cr, Uri tree) {
+    /**
+     * Searches everything under the picked folder for manga, however it's nested.
+     *
+     * A folder is a series when it holds chapter archives (.cbz / .zip) or chapter folders full of
+     * images. A folder of loose images with no subfolders is a one-shot. Each series is filed under
+     * the folder that contains it ("downloads" and the picked folder itself are skipped as names).
+     */
+    static List<Series> scan(ContentResolver cr, Uri tree, Progress progress) {
         List<Series> out = new ArrayList<>();
-        String downloads = downloadsDocId(cr, tree);
-        for (Entry source : list(cr, tree, downloads)) {
-            if (!source.isDir()) continue;
-            for (Entry series : list(cr, tree, source.docId)) {
-                if (series.isDir()) out.add(new Series(series.docId, series.name, source.name));
-            }
-        }
+        String root = DocumentsContract.getTreeDocumentId(tree);
+        int[] scanned = {0};
+        walk(cr, tree, root, rootName(tree), "", 0, out, scanned, progress);
         Collections.sort(out, (a, b) -> a.title.compareToIgnoreCase(b.title));
+        return out;
+    }
+
+    private static String rootName(Uri tree) {
+        String id = DocumentsContract.getTreeDocumentId(tree);
+        int cut = Math.max(id.lastIndexOf('/'), id.lastIndexOf(':'));
+        return cut >= 0 ? id.substring(cut + 1) : id;
+    }
+
+    private static boolean skipFolder(String name) {
+        String n = name.toLowerCase(Locale.US);
+        // Mihon's unfinished downloads and system/cache folders
+        return n.endsWith("_tmp") || n.startsWith(".") || n.equals("android") || n.equals("cache") || n.equals("autobackup");
+    }
+
+    private static void walk(ContentResolver cr, Uri tree, String docId, String name, String category, int depth,
+                             List<Series> out, int[] scanned, Progress progress) {
+        List<Entry> kids = list(cr, tree, docId);
+        scanned[0]++;
+        if (progress != null && scanned[0] % 10 == 0) progress.folders(scanned[0], out.size());
+
+        boolean hasArchive = false, hasImages = false;
+        List<Entry> dirs = new ArrayList<>();
+        for (Entry e : kids) {
+            if (e.isDir()) { if (!skipFolder(e.name)) dirs.add(e); }
+            else if (e.isArchive()) hasArchive = true;
+            else if (isImage(e.name)) hasImages = true;
+        }
+        if (hasArchive) { out.add(new Series(docId, name, category)); return; }
+
+        // Chapter folders: subfolders that hold page images directly
+        List<Entry> deeper = new ArrayList<>();
+        int chapterDirs = 0;
+        for (Entry d : dirs) {
+            // A chapter folder holds page images and nothing else that looks like more manga
+            // (a series folder with a cover.jpg also has chapter folders or archives inside, so it isn't one)
+            boolean images = false, nested = false;
+            for (Entry e : list(cr, tree, d.docId)) {
+                if (e.isDir() || e.isArchive()) { nested = true; break; }
+                if (isImage(e.name)) images = true;
+            }
+            if (images && !nested) chapterDirs++; else deeper.add(d);
+        }
+        if (chapterDirs > 0) { out.add(new Series(docId, name, category)); return; }
+        if (hasImages && dirs.isEmpty()) { out.add(new Series(docId, name, category)); return; }
+        if (depth >= 7) return;
+
+        // Folders below here are filed under this folder's name ("downloads" and the picked folder don't count)
+        String childCategory = (depth == 0 || name.equalsIgnoreCase("downloads")) ? category : name;
+        for (Entry d : deeper) walk(cr, tree, d.docId, d.name, childCategory, depth + 1, out, scanned, progress);
+    }
+
+    /* ---------- Saved scan, so the library opens instantly ---------- */
+
+    static void saveScan(Context c, Uri tree, List<Series> list) {
+        try {
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (Series s : list) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("id", s.docId); o.put("t", s.title); o.put("c", s.source);
+                a.put(o);
+            }
+            Theater.prefs(c).edit().putString("scan:" + tree, a.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    static List<Series> savedScan(Context c, Uri tree) {
+        List<Series> out = new ArrayList<>();
+        String raw = Theater.prefs(c).getString("scan:" + tree, null);
+        if (raw == null) return out;
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(raw);
+            for (int i = 0; i < a.length(); i++) {
+                org.json.JSONObject o = a.getJSONObject(i);
+                out.add(new Series(o.getString("id"), o.getString("t"), o.optString("c", "")));
+            }
+        } catch (Exception ignored) { }
         return out;
     }
 
@@ -109,6 +191,12 @@ final class MihonStore {
             if (na != nb) return Double.compare(na, nb);
             return Theater.natural(a.name, b.name);
         });
+        // One-shot: the series folder itself holds the pages
+        if (out.isEmpty()) {
+            for (Entry e : list(cr, tree, seriesDocId)) {
+                if (!e.isDir() && isImage(e.name)) { out.add(new Entry(seriesDocId, "One-shot", Document.MIME_TYPE_DIR)); break; }
+            }
+        }
         return out;
     }
 
@@ -202,6 +290,12 @@ final class MihonStore {
     /** First page of the first chapter, small, for the library grid. */
     static Bitmap cover(Context ctx, Uri tree, String seriesDocId, int maxW) {
         ContentResolver cr = ctx.getContentResolver();
+        for (Entry e : list(cr, tree, seriesDocId)) {
+            String n = e.name.toLowerCase(Locale.US);
+            if (!e.isDir() && isImage(n) && (n.startsWith("cover") || n.startsWith("folder") || n.startsWith("poster"))) {
+                return decode(cr, DocumentsContract.buildDocumentUriUsingTree(tree, e.docId), maxW, maxW * 2);
+            }
+        }
         List<Entry> ch = chapters(cr, tree, seriesDocId);
         if (ch.isEmpty()) return null;
         Entry first = ch.get(0);

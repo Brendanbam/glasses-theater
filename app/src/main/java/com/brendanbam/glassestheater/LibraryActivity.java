@@ -15,17 +15,27 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.GridView;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Manga downloaded in Mihon, as a grid of covers. Recently read series come first. */
+/**
+ * Your manga as a grid of covers, organized into categories.
+ *
+ * Pick any parent folder once (Mihon's folder, a "Manga" folder, Downloads…). Everything inside is
+ * searched for series and filed under the folder each one sits in. The last search is saved, so the
+ * library opens instantly and then re-checks in the background.
+ */
 public class LibraryActivity extends Activity {
 
     private static final int PICK_FOLDER = 7;
@@ -35,7 +45,12 @@ public class LibraryActivity extends Activity {
     private final LruCache<String, Bitmap> covers = new LruCache<String, Bitmap>(48 * 1024 * 1024) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
     };
+    private static final String ALL = "\u0000all", CONTINUE = "\u0000continue";
+    private final List<MihonStore.Series> all = new ArrayList<>();
     private final List<MihonStore.Series> series = new ArrayList<>();
+    private String filter = ALL;
+    private LinearLayout chips;
+    private boolean scanning;
     private GridView grid;
     private TextView status;
     private Theater.ScreenFrame frame;
@@ -54,18 +69,32 @@ public class LibraryActivity extends Activity {
         TextView title = Theater.text(this, 26, Theater.ACCENT, true);
         title.setText("MANGA");
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button rescan = Theater.button(this, "Rescan");
+        rescan.setOnClickListener(v -> scan());
+        top.addView(rescan);
         Button mihon = Theater.button(this, "Open Mihon");
         mihon.setOnClickListener(v -> {
             Intent i = getPackageManager().getLaunchIntentForPackage(MihonStore.MIHON_PACKAGE);
             if (i != null) startActivity(i);
         });
-        top.addView(mihon);
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-2, -2);
+        mlp.leftMargin = Theater.dp(this, 10);
+        top.addView(mihon, mlp);
         Button folder = Theater.button(this, "Change folder");
         folder.setOnClickListener(v -> pickFolder());
         LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-2, -2);
         flp.leftMargin = Theater.dp(this, 10);
         top.addView(folder, flp);
         col.addView(top);
+
+        // Category filter: All, Continue reading, then each folder
+        chips = new LinearLayout(this);
+        HorizontalScrollView chipScroll = new HorizontalScrollView(this);
+        chipScroll.setHorizontalScrollBarEnabled(false);
+        chipScroll.addView(chips);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
+        clp.topMargin = Theater.dp(this, 14);
+        col.addView(chipScroll, clp);
 
         status = Theater.text(this, 15, Theater.MUTED, false);
         status.setPadding(0, Theater.dp(this, 8), 0, Theater.dp(this, 8));
@@ -90,16 +119,27 @@ public class LibraryActivity extends Activity {
         setContentView(frame);
 
         if (MihonStore.tree(this) == null) {
-            status.setText("Pick your Mihon folder once (the one that holds \"downloads\"). In Mihon: Settings → Data and storage → Storage location shows where it is.");
+            status.setText("Pick the folder your manga is in. It can be a parent folder (Mihon's folder, a Manga folder, Downloads…); everything inside it is searched.");
             pickFolder();
         }
     }
+
+    private boolean firstResume = true;
 
     @Override
     protected void onResume() {
         super.onResume();
         frame.setPct(Theater.screenSize(this));
-        if (MihonStore.tree(this) != null) load();
+        Uri tree = MihonStore.tree(this);
+        if (tree == null) return;
+        if (firstResume) {
+            firstResume = false;
+            List<MihonStore.Series> saved = MihonStore.savedScan(this, tree);
+            if (!saved.isEmpty()) show(saved);
+            scan();
+        } else {
+            applyFilter(); // reading progress may have changed the order
+        }
     }
 
     private void pickFolder() {
@@ -118,30 +158,97 @@ public class LibraryActivity extends Activity {
         } catch (Exception ignored) { }
         MihonStore.setTree(this, tree);
         covers.evictAll();
-        load();
+        all.clear();
+        filter = ALL;
+        firstResume = false;
+        scan();
     }
 
-    private void load() {
+    /** Searches the picked folder in the background; the grid stays usable meanwhile. */
+    private void scan() {
         Uri tree = MihonStore.tree(this);
-        if (series.isEmpty()) status.setText("Loading your downloads…");
+        if (tree == null || scanning) return;
+        scanning = true;
+        if (all.isEmpty()) status.setText("Searching your folders for manga…");
         io.execute(() -> {
-            List<MihonStore.Series> found = MihonStore.library(getContentResolver(), tree);
-            // Recently read first, then A–Z
-            Collections.sort(found, (a, b) -> {
-                long ra = MihonStore.lastRead(this, a.docId), rb = MihonStore.lastRead(this, b.docId);
-                if (ra != rb) return Long.compare(rb, ra);
-                return a.title.compareToIgnoreCase(b.title);
-            });
+            List<MihonStore.Series> found = MihonStore.scan(getContentResolver(), tree, (folders, count) ->
+                    ui.post(() -> { if (all.isEmpty()) status.setText("Searching… " + folders + " folders checked, " + count + " series found"); }));
+            MihonStore.saveScan(this, tree, found);
             ui.post(() -> {
-                series.clear();
-                series.addAll(found);
-                adapter.notifyDataSetChanged();
-                status.setText(found.isEmpty()
-                        ? "No downloaded manga found. Download chapters in Mihon, or use Change folder to pick the Mihon folder."
-                        : found.size() + " series  •  A open  •  L1 / R1 screen size  •  B back");
-                if (!found.isEmpty()) grid.requestFocus();
+                scanning = false;
+                show(found);
             });
         });
+    }
+
+    private void show(List<MihonStore.Series> found) {
+        all.clear();
+        all.addAll(found);
+        buildChips();
+        applyFilter();
+    }
+
+    private static String categoryName(MihonStore.Series s) {
+        return s.source == null || s.source.isEmpty() ? "Library" : s.source;
+    }
+
+    /** One button per category (with counts), plus All and Continue reading. */
+    private void buildChips() {
+        chips.removeAllViews();
+        Map<String, Integer> counts = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        int reading = 0;
+        for (MihonStore.Series s : all) {
+            counts.merge(categoryName(s), 1, Integer::sum);
+            if (MihonStore.progress(this, s.docId) != null) reading++;
+        }
+        Map<String, String> items = new LinkedHashMap<>();
+        items.put(ALL, "All  " + all.size());
+        if (reading > 0) items.put(CONTINUE, "Continue reading  " + reading);
+        if (counts.size() > 1) for (Map.Entry<String, Integer> e : counts.entrySet()) items.put(e.getKey(), e.getKey() + "  " + e.getValue());
+        if (!items.containsKey(filter)) filter = ALL;
+        for (Map.Entry<String, String> e : items.entrySet()) {
+            Button b = Theater.button(this, e.getValue());
+            b.setTextSize(15);
+            b.setPadding(Theater.dp(this, 16), Theater.dp(this, 8), Theater.dp(this, 16), Theater.dp(this, 8));
+            boolean on = e.getKey().equals(filter);
+            if (on) b.setTextColor(Theater.ACCENT);
+            final String key = e.getKey();
+            b.setOnClickListener(v -> { filter = key; buildChips(); applyFilter(); });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.rightMargin = Theater.dp(this, 8);
+            chips.addView(b, lp);
+        }
+    }
+
+    /** Shows the chosen category: recently read first, then A–Z. */
+    private void applyFilter() {
+        List<MihonStore.Series> shown = new ArrayList<>();
+        for (MihonStore.Series s : all) {
+            if (filter.equals(ALL)
+                    || (filter.equals(CONTINUE) && MihonStore.progress(this, s.docId) != null)
+                    || filter.equals(categoryName(s))) shown.add(s);
+        }
+        Collections.sort(shown, (a, b) -> {
+            long ra = MihonStore.lastRead(this, a.docId), rb = MihonStore.lastRead(this, b.docId);
+            if (ra != rb) return Long.compare(rb, ra);
+            return a.title.compareToIgnoreCase(b.title);
+        });
+        boolean hadFocus = grid.hasFocus();
+        series.clear();
+        series.addAll(shown);
+        adapter.notifyDataSetChanged();
+        java.util.Set<String> distinct = new java.util.HashSet<>();
+        for (MihonStore.Series s : all) distinct.add(categoryName(s).toLowerCase(java.util.Locale.US));
+        int categories = distinct.size() > 1 ? distinct.size() : 0;
+        status.setText(all.isEmpty()
+                ? (scanning ? "Searching your folders for manga…" : "No manga found in this folder. Use Change folder to pick another one.")
+                : shown.size() + " series" + (categories > 0 ? " in " + categoryLabel() : "")
+                + (scanning ? "  •  checking for new downloads…" : "") + "  •  A open  •  L1 / R1 size  •  B back");
+        if (!shown.isEmpty() && (hadFocus || !chips.hasFocus())) grid.requestFocus();
+    }
+
+    private String categoryLabel() {
+        return filter.equals(ALL) ? "all categories" : filter.equals(CONTINUE) ? "Continue reading" : filter;
     }
 
     private void openSeries(MihonStore.Series s) {
@@ -193,7 +300,7 @@ public class LibraryActivity extends Activity {
             MihonStore.Series s = series.get(pos);
             ImageView img = (ImageView) card.getChildAt(0);
             ((TextView) card.getChildAt(1)).setText(s.title);
-            ((TextView) card.getChildAt(2)).setText(MihonStore.progress(LibraryActivity.this, s.docId) != null ? "Continue • " + s.source : s.source);
+            ((TextView) card.getChildAt(2)).setText(MihonStore.progress(LibraryActivity.this, s.docId) != null ? "Continue • " + categoryName(s) : categoryName(s));
             img.setTag(s.docId);
             Bitmap cached = covers.get(s.docId);
             img.setImageBitmap(cached);

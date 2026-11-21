@@ -35,7 +35,7 @@ public class HomeActivity extends Activity {
         sub.setPadding(0, Theater.dp(this, 4), 0, Theater.dp(this, 20));
         col.addView(sub);
 
-        Button manga = add(col, "📖   Manga  —  your Mihon downloads");
+        Button manga = add(col, "📖   Manga  —  Mihon downloads and your manga folders");
         manga.setOnClickListener(v -> startActivity(new Intent(this, LibraryActivity.class)));
 
         Button cinema = add(col, "🎬   Cinema  —  open a video file");
@@ -60,8 +60,9 @@ public class HomeActivity extends Activity {
         TextView tip = Theater.text(this, 14, Theater.MUTED, false);
         tip.setText("Watching from Nuvio: in Nuvio's player settings choose an external player and pick Glasses Theater. "
                 + "Streams then open on the floating screen, and Nuvio remembers where you stopped.\n\n"
-                + "Reading: download chapters in Mihon first. Glasses Theater reads Mihon's downloads folder; "
-                + "your progress is kept here.");
+                + "Reading: pick any folder that holds your manga, such as Mihon's folder or a parent folder with "
+                + "several. Every folder inside is searched, and series are sorted into categories by the folder "
+                + "they're in. Chapters can be image folders or .cbz files.");
         tip.setPadding(0, Theater.dp(this, 20), 0, 0);
         col.addView(tip);
 
