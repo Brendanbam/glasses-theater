@@ -9,7 +9,9 @@ import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.graphics.Bitmap;
 import android.widget.BaseAdapter;
+import android.widget.ImageView;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -27,7 +29,8 @@ public class ChaptersActivity extends Activity {
     private String seriesId, title;
     private ListView list;
     private Button resume;
-    private TextView status;
+    private TextView status, facts, about;
+    private ImageView cover;
     private Theater.ScreenFrame frame;
 
     @Override
@@ -40,9 +43,31 @@ public class ChaptersActivity extends Activity {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(Theater.dp(this, 24), Theater.dp(this, 20), Theater.dp(this, 24), Theater.dp(this, 12));
+        // Cover and details (from AniList when available)
+        LinearLayout header = new LinearLayout(this);
+        cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.setBackground(Theater.round(Theater.CARD, 0, 0, this, 12));
+        cover.setClipToOutline(true);
+        cover.setVisibility(View.GONE);
+        LinearLayout.LayoutParams cvp = new LinearLayout.LayoutParams(Theater.dp(this, 110), Theater.dp(this, 160));
+        cvp.rightMargin = Theater.dp(this, 18);
+        header.addView(cover, cvp);
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
         TextView head = Theater.text(this, 24, 0xFFFFFFFF, true);
         head.setText(title);
-        col.addView(head);
+        details.addView(head);
+        facts = Theater.text(this, 14, Theater.ACCENT, false);
+        facts.setPadding(0, Theater.dp(this, 4), 0, 0);
+        details.addView(facts);
+        about = Theater.text(this, 14, 0xFFD0D6E0, false);
+        about.setMaxLines(5);
+        about.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        about.setPadding(0, Theater.dp(this, 6), 0, 0);
+        details.addView(about);
+        header.addView(details, new LinearLayout.LayoutParams(0, -2, 1f));
+        col.addView(header);
         status = Theater.text(this, 14, Theater.MUTED, false);
         status.setPadding(0, Theater.dp(this, 4), 0, Theater.dp(this, 12));
         status.setText("Loading chapters…");
@@ -66,6 +91,34 @@ public class ChaptersActivity extends Activity {
         frame = new Theater.ScreenFrame(this, Theater.screenSize(this));
         frame.addView(col);
         setContentView(frame);
+        loadDetails();
+    }
+
+    private void loadDetails() {
+        Executors.newSingleThreadExecutor().execute(() -> {
+            Meta.Info info = Meta.get(this, title);
+            if (info == null && Meta.enabled(this)) info = Meta.fetch(this, title);
+            java.io.File art = Meta.coverFile(this, title);
+            Bitmap b = art.exists() ? MihonStore.decode(getContentResolver(), Uri.fromFile(art), Theater.dp(this, 220), Theater.dp(this, 320)) : null;
+            if (b == null) b = MihonStore.cover(this, MihonStore.tree(this), seriesId, Theater.dp(this, 220));
+            final Meta.Info i = info;
+            final Bitmap bmp = b;
+            ui.post(() -> {
+                if (bmp != null) { cover.setImageBitmap(bmp); cover.setVisibility(View.VISIBLE); }
+                if (i == null || !i.found) return;
+                StringBuilder f = new StringBuilder();
+                if (i.english != null && !i.english.equalsIgnoreCase(title)) f.append(i.english).append("\n");
+                if (i.authors != null) f.append(i.authors).append("\n");
+                if (i.genres != null) f.append(i.genres).append("\n");
+                StringBuilder line = new StringBuilder();
+                if (i.status != null) line.append(i.status);
+                if (i.chapters > 0) line.append(line.length() > 0 ? "  •  " : "").append(i.chapters).append(" chapters");
+                if (i.score > 0) line.append(line.length() > 0 ? "  •  " : "").append("★ ").append(i.score).append("%");
+                f.append(line);
+                facts.setText(f.toString().trim());
+                if (i.description != null) about.setText(i.description);
+            });
+        });
     }
 
     @Override

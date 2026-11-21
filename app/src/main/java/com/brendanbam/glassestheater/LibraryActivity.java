@@ -41,6 +41,9 @@ public class LibraryActivity extends Activity {
     private static final int PICK_FOLDER = 7;
 
     private final ExecutorService io = Executors.newFixedThreadPool(3);
+    // Cover / info lookups run one at a time (AniList allows about 90 a minute)
+    private final ExecutorService metaQueue = Executors.newSingleThreadExecutor();
+    private boolean metaRunning;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final LruCache<String, Bitmap> covers = new LruCache<String, Bitmap>(48 * 1024 * 1024) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
@@ -186,6 +189,32 @@ public class LibraryActivity extends Activity {
         all.addAll(found);
         buildChips();
         applyFilter();
+        fetchMeta();
+    }
+
+    /** Downloads covers and info for series that don't have them yet, refreshing each card as it arrives. */
+    private void fetchMeta() {
+        if (metaRunning || !Meta.enabled(this)) return;
+        List<MihonStore.Series> todo = new ArrayList<>();
+        for (MihonStore.Series s : all) if (Meta.needsFetch(this, s.title)) todo.add(s);
+        if (todo.isEmpty()) return;
+        metaRunning = true;
+        metaQueue.execute(() -> {
+            int done = 0;
+            for (MihonStore.Series s : todo) {
+                if (Thread.currentThread().isInterrupted()) break;
+                Meta.Info info = Meta.fetch(this, s.title);
+                done++;
+                final int n = done;
+                ui.post(() -> {
+                    covers.remove(s.docId);
+                    adapter.notifyDataSetChanged();
+                    if (!scanning) status.setText("Getting covers and info… " + n + " / " + todo.size());
+                });
+                try { Thread.sleep(info == null ? 3000 : 800); } catch (InterruptedException e) { break; }
+            }
+            ui.post(() -> { metaRunning = false; applyFilter(); });
+        });
     }
 
     private static String categoryName(MihonStore.Series s) {
@@ -308,10 +337,14 @@ public class LibraryActivity extends Activity {
                 final ImageView target = img;
                 final Uri tree = MihonStore.tree(LibraryActivity.this);
                 io.execute(() -> {
-                    Bitmap b = MihonStore.cover(LibraryActivity.this, tree, s.docId, Theater.dp(LibraryActivity.this, 160));
+                    // Downloaded cover art first, then a cover image in the folder, then the first page
+                    java.io.File art = Meta.coverFile(LibraryActivity.this, s.title);
+                    Bitmap b = art.exists() ? MihonStore.decode(getContentResolver(), Uri.fromFile(art), Theater.dp(LibraryActivity.this, 160), Theater.dp(LibraryActivity.this, 240)) : null;
+                    if (b == null) b = MihonStore.cover(LibraryActivity.this, tree, s.docId, Theater.dp(LibraryActivity.this, 160));
                     if (b == null) return;
-                    covers.put(s.docId, b);
-                    ui.post(() -> { if (s.docId.equals(target.getTag())) target.setImageBitmap(b); });
+                    final Bitmap img2 = b;
+                    covers.put(s.docId, img2);
+                    ui.post(() -> { if (s.docId.equals(target.getTag())) target.setImageBitmap(img2); });
                 });
             }
             return card;
@@ -327,6 +360,7 @@ public class LibraryActivity extends Activity {
     @Override
     protected void onDestroy() {
         io.shutdownNow();
+        metaQueue.shutdownNow();
         super.onDestroy();
     }
 }

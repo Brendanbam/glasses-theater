@@ -15,7 +15,7 @@ public class HomeActivity extends Activity {
     private static final int PICK_VIDEO = 3;
 
     private Theater.ScreenFrame frame;
-    private Button sizeButton, directionButton;
+    private Button sizeButton, directionButton, metaButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,6 +57,12 @@ public class HomeActivity extends Activity {
             refresh();
         });
 
+        metaButton = add(col, "");
+        metaButton.setOnClickListener(v -> {
+            Meta.setEnabled(this, !Meta.enabled(this));
+            refresh();
+        });
+
         TextView tip = Theater.text(this, 14, Theater.MUTED, false);
         tip.setText("Watching from Nuvio: in Nuvio's player settings choose an external player and pick Glasses Theater. "
                 + "Streams then open on the floating screen, and Nuvio remembers where you stopped.\n\n"
@@ -86,6 +92,7 @@ public class HomeActivity extends Activity {
     private void refresh() {
         sizeButton.setText("🔍   Screen size: " + Theater.screenSize(this) + "%   (A to change)");
         directionButton.setText("↔   Manga reading direction: " + (Theater.rightToLeft(this) ? "right to left" : "left to right"));
+        metaButton.setText("🖼   Download covers and info (AniList): " + (Meta.enabled(this) ? "on" : "off"));
         frame.setPct(Theater.screenSize(this));
     }
 
