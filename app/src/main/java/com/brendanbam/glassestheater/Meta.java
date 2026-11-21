@@ -60,12 +60,23 @@ final class Meta {
     private static File infoFile(Context c, String title) { return new File(dir(c), key(title) + ".json"); }
 
     /** "[Group] Some Title (Digital) v01" → "Some Title". */
+    // Android's regex engine (ICU) needs ] and } escaped even where desktop Java doesn't
+    private static final java.util.regex.Pattern BRACKETS = java.util.regex.Pattern.compile("\\[[^\\]]*\\]|\\([^)]*\\)|\\{[^}]*\\}");
+    private static final java.util.regex.Pattern VOLUME = java.util.regex.Pattern.compile("(?i)\\b(v|vol\\.?|volume)\\s*\\d+.*$");
+    private static final java.util.regex.Pattern NOISE = java.util.regex.Pattern.compile("(?i)\\b(complete|digital|official|colored|webtoon|manga)\\b");
+    private static final java.util.regex.Pattern SPACES = java.util.regex.Pattern.compile("\\s+");
+
     static String clean(String folder) {
-        String t = folder.replace('_', ' ');
-        t = t.replaceAll("\\[[^\\]]*]|\\([^)]*\\)|\\{[^}]*}", " ");
-        t = t.replaceAll("(?i)\\b(v|vol\\.?|volume)\\s*\\d+.*$", " ");
-        t = t.replaceAll("(?i)\\b(complete|digital|official|colored|webtoon|manga)\\b", " ");
-        return t.replaceAll("\\s+", " ").trim();
+        try {
+            String t = folder.replace('_', ' ');
+            t = BRACKETS.matcher(t).replaceAll(" ");
+            t = VOLUME.matcher(t).replaceAll(" ");
+            t = NOISE.matcher(t).replaceAll(" ");
+            String out = SPACES.matcher(t).replaceAll(" ").trim();
+            return out.isEmpty() ? folder.trim() : out;
+        } catch (Exception e) {
+            return folder.trim();
+        }
     }
 
     /** Saved info, or null if this series hasn't been looked up yet. */
