@@ -217,28 +217,14 @@ final class MihonStore {
             for (Entry e : imgs) out.add(DocumentsContract.buildDocumentUriUsingTree(tree, e.docId));
             return out;
         }
-        File dir = new File(ctx.getCacheDir(), "cbz/" + Integer.toHexString(chapter.docId.hashCode()));
+        File dir = new File(ctx.getCacheDir(), "cbz2/" + Integer.toHexString(chapter.docId.hashCode()));
         File[] cached = dir.listFiles();
         if (cached == null || cached.length == 0) {
+            deleteTree(new File(ctx.getCacheDir(), "cbz")); // pages unpacked by v1.0.1–1.0.2
             cleanCache(ctx);
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
-            Uri uri = DocumentsContract.buildDocumentUriUsingTree(tree, chapter.docId);
-            try (InputStream in = cr.openInputStream(uri); ZipInputStream zip = new ZipInputStream(in)) {
-                ZipEntry z;
-                int i = 0;
-                byte[] buf = new byte[64 * 1024];
-                while ((z = zip.getNextEntry()) != null) {
-                    if (z.isDirectory() || !isImage(z.getName())) continue;
-                    String base = new File(z.getName()).getName();
-                    // Keep the original name for ordering; prefix guards against duplicate names in subfolders
-                    File f = new File(dir, String.format(Locale.US, "%s__%04d", base, i++));
-                    try (OutputStream o = new FileOutputStream(f)) {
-                        int n;
-                        while ((n = zip.read(buf)) > 0) o.write(buf, 0, n);
-                    }
-                }
-            } catch (Exception ignored) { }
+            unpack(cr, DocumentsContract.buildDocumentUriUsingTree(tree, chapter.docId), dir, ctx.getCacheDir());
             cached = dir.listFiles();
         }
         if (cached == null) return out;
@@ -249,9 +235,50 @@ final class MihonStore {
         return out;
     }
 
+    /**
+     * Unpacks a chapter archive's page images into [dir], numbered in reading order.
+     * The archive is copied first and read with ZipFile: streaming reads fail on some .cbz files
+     * (stored entries with data descriptors), which left pages broken.
+     */
+    private static void unpack(ContentResolver cr, Uri archive, File dir, File cacheRoot) {
+        File copy = new File(cacheRoot, "chapter-archive.tmp");
+        byte[] buf = new byte[128 * 1024];
+        try {
+            try (InputStream in = cr.openInputStream(archive); OutputStream o = new FileOutputStream(copy)) {
+                int n;
+                while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+            }
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(copy)) {
+                List<ZipEntry> imgs = new ArrayList<>();
+                java.util.Enumeration<? extends ZipEntry> en = zf.entries();
+                while (en.hasMoreElements()) {
+                    ZipEntry z = en.nextElement();
+                    if (!z.isDirectory() && isImage(z.getName()) && !new File(z.getName()).getName().startsWith(".")) imgs.add(z);
+                }
+                Collections.sort(imgs, (a, b) -> Theater.natural(a.getName(), b.getName()));
+                for (int i = 0; i < imgs.size(); i++) {
+                    ZipEntry z = imgs.get(i);
+                    File f = new File(dir, String.format(Locale.US, "%04d_%s", i, new File(z.getName()).getName()));
+                    try (InputStream in = zf.getInputStream(z); OutputStream o = new FileOutputStream(f)) {
+                        int n;
+                        while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            lastError = "couldn't unpack the .cbz (" + e.getClass().getSimpleName() + ")";
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            copy.delete();
+        }
+    }
+
+    /** Why the last page or archive failed, for the reader's error message. */
+    static volatile String lastError = null;
+
     /** Keeps the unpacked-archive cache to the last few chapters. */
     private static void cleanCache(Context ctx) {
-        File root = new File(ctx.getCacheDir(), "cbz");
+        File root = new File(ctx.getCacheDir(), "cbz2");
         File[] dirs = root.listFiles();
         if (dirs == null || dirs.length < 4) return;
         java.util.Arrays.sort(dirs, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
@@ -269,20 +296,45 @@ final class MihonStore {
 
     /** Decodes a page no bigger than needed for the screen (and never big enough to crash drawing). */
     static Bitmap decode(ContentResolver cr, Uri uri, int maxW, int maxH) {
+        // Android's newer decoder handles more formats (HEIF/AVIF, odd JPEGs, animated WebP/GIF first frame)
+        try {
+            android.graphics.ImageDecoder.Source src = android.graphics.ImageDecoder.createSource(cr, uri);
+            Bitmap b = android.graphics.ImageDecoder.decodeBitmap(src, (decoder, info, source) -> {
+                int w = info.getSize().getWidth(), h = info.getSize().getHeight();
+                decoder.setTargetSampleSize(sampleFor(w, h, maxW, maxH));
+                decoder.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE);
+            });
+            if (b != null) return b;
+        } catch (Exception | OutOfMemoryError e) {
+            lastError = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
+        }
+        Bitmap b = decodeLegacy(cr, uri, maxW, maxH);
+        if (b != null) lastError = null;
+        return b;
+    }
+
+    private static int sampleFor(int w, int h, int maxW, int maxH) {
+        boolean tall = h > w * 2;
+        int sample = 1;
+        while (tall ? w / (sample * 2) >= maxW : (w / (sample * 2) >= maxW || h / (sample * 2) >= maxH)) sample *= 2;
+        while ((long) (w / sample) * (h / sample) * 4 > 90L * 1024 * 1024 || h / sample > 16000) sample *= 2;
+        return sample;
+    }
+
+    private static Bitmap decodeLegacy(ContentResolver cr, Uri uri, int maxW, int maxH) {
         try {
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inJustDecodeBounds = true;
             try (InputStream in = cr.openInputStream(uri)) { BitmapFactory.decodeStream(in, null, o); }
-            if (o.outWidth <= 0 || o.outHeight <= 0) return null;
-            boolean tall = o.outHeight > o.outWidth * 2;
-            int sample = 1;
-            // Normal pages fit the screen; long webtoon strips fit the width
-            while ((tall ? o.outWidth / (sample * 2) >= maxW : (o.outWidth / (sample * 2) >= maxW || o.outHeight / (sample * 2) >= maxH))) sample *= 2;
-            while ((long) (o.outWidth / sample) * (o.outHeight / sample) * 4 > 90L * 1024 * 1024 || o.outHeight / sample > 16000) sample *= 2;
+            if (o.outWidth <= 0 || o.outHeight <= 0) {
+                if (lastError == null) lastError = "the image format isn't supported";
+                return null;
+            }
             BitmapFactory.Options d = new BitmapFactory.Options();
-            d.inSampleSize = sample;
+            d.inSampleSize = sampleFor(o.outWidth, o.outHeight, maxW, maxH);
             try (InputStream in = cr.openInputStream(uri)) { return BitmapFactory.decodeStream(in, null, d); }
         } catch (Exception | OutOfMemoryError e) {
+            if (lastError == null) lastError = e.getClass().getSimpleName();
             return null;
         }
     }

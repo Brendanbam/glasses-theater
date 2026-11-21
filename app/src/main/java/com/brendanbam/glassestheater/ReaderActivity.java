@@ -122,7 +122,10 @@ public class ReaderActivity extends Activity {
             ui.post(() -> {
                 if (token != loadToken) return;
                 pages = found;
-                if (pages.isEmpty()) { info.setText(chapterName() + " has no pages"); return; }
+                if (pages.isEmpty()) {
+                    info.setText(chapterName() + " has no pages" + (MihonStore.lastError != null ? "  •  " + MihonStore.lastError : ""));
+                    return;
+                }
                 // startPage < 0 means "last page" (coming back from the next chapter)
                 showPage(startPage < 0 ? pages.size() - 1 : Math.min(startPage, pages.size() - 1), startPage < 0);
             });
@@ -141,7 +144,16 @@ public class ReaderActivity extends Activity {
                 ui.post(() -> {
                     if (token != loadToken || page != index) return;
                     if (bmp != null) { cache.put(index, bmp); display(bmp, fromEnd); }
-                    else info.setText("Couldn't open page " + (index + 1));
+                    else {
+                        // Say why, and which file, so a bad page or format can be tracked down
+                        String file = pages.get(index).getLastPathSegment();
+                        if (file != null && file.contains("/")) file = file.substring(file.lastIndexOf('/') + 1);
+                        info.setText("Couldn't open page " + (index + 1) + "  •  " + file
+                                + (MihonStore.lastError != null ? "  •  " + MihonStore.lastError : "")
+                                + "\nPress A for the next page");
+                        info.setVisibility(View.VISIBLE);
+                        ui.removeCallbacks(hideInfo);
+                    }
                 });
             });
         }
@@ -151,6 +163,7 @@ public class ReaderActivity extends Activity {
 
     private Bitmap decode(int index) {
         if (index < 0 || index >= pages.size()) return null;
+        MihonStore.lastError = null;
         int w = getResources().getDisplayMetrics().widthPixels;
         int h = getResources().getDisplayMetrics().heightPixels;
         return MihonStore.decode(getContentResolver(), pages.get(index), w, h);
