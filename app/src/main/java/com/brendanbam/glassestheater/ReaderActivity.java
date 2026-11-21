@@ -671,7 +671,10 @@ public class ReaderActivity extends Activity {
 
         @Override
         public View getView(int p, View convert, ViewGroup parent) {
-            int width = Math.max(1, parent.getWidth() - parent.getPaddingLeft() - parent.getPaddingRight());
+            // Before the first layout the list has no width yet: use the screen's, or pages load tiny and blurry
+            int full = parent.getWidth() > 0 ? parent.getWidth()
+                    : Math.round(getResources().getDisplayMetrics().widthPixels * Theater.screenSize(ReaderActivity.this) / 100f);
+            int width = Math.max(200, full - parent.getPaddingLeft() - parent.getPaddingRight());
             if (p >= pages.size()) {
                 TextView t = convert instanceof TextView ? (TextView) convert : Theater.text(ReaderActivity.this, 18, Color.WHITE, true);
                 t.setGravity(Gravity.CENTER);

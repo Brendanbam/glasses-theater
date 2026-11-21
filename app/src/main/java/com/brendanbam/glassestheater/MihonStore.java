@@ -317,7 +317,8 @@ final class MihonStore {
         boolean tall = h > w * 2;
         int sample = 1;
         while (tall ? w / (sample * 2) >= maxW : (w / (sample * 2) >= maxW || h / (sample * 2) >= maxH)) sample *= 2;
-        while ((long) (w / sample) * (h / sample) * 4 > 90L * 1024 * 1024 || h / sample > 16000) sample *= 2;
+        // Stay within what the GPU can draw in one piece (very tall webtoon pages)
+        while ((long) (w / sample) * (h / sample) * 4 > 80L * 1024 * 1024 || h / sample > 12000 || w / sample > 8192) sample *= 2;
         return sample;
     }
 
